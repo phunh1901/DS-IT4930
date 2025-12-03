@@ -5,6 +5,21 @@ from keras_facenet import FaceNet
 import matplotlib.pyplot as plt
 import pickle
 import os
+import shutil
+
+# Định nghĩa đường dẫn
+DATA_DIR = "../../data/Face_Verification"
+DATA_FILE = os.path.join(DATA_DIR, "data.pkl")
+PERSONAL_DIR = os.path.join(DATA_DIR, "Personal")
+
+# Tạo thư mục nếu chưa có
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(PERSONAL_DIR, exist_ok=True)
+
+print(f"Data directory: {os.path.abspath(DATA_DIR)}")
+print(f"Personal directory: {os.path.abspath(PERSONAL_DIR)}")
+print(f"Database file: {os.path.abspath(DATA_FILE)}")
+print(f"Database exists: {os.path.exists(DATA_FILE)}\n")
 
 
 class FaceVerification:
@@ -59,14 +74,65 @@ class FaceVerification:
         
         return distance, face1, face2
 
+
+def get_next_personal_folder():
+    """Tìm số thứ tự tiếp theo cho folder Personal"""
+    existing_folders = [f for f in os.listdir(PERSONAL_DIR) 
+                       if os.path.isdir(os.path.join(PERSONAL_DIR, f)) 
+                       and f.startswith("Personal")]
+    
+    if not existing_folders:
+        return 1
+    
+    # Lấy số lớn nhất
+    numbers = []
+    for folder in existing_folders:
+        try:
+            num = int(folder.replace("Personal", ""))
+            numbers.append(num)
+        except ValueError:
+            continue
+    
+    return max(numbers) + 1 if numbers else 1
+
+
 # Register    
-def Face_Register(images, infor, data_file="data.pkl"):
+def Face_Register(image_paths, infor, data_file=DATA_FILE):
+    """
+    image_paths: list các đường dẫn ảnh từ máy local
+    infor: thông tin người dùng
+    """
     embeddings = []
     register = FaceVerification()
     
-    for i, img in enumerate(images):
-        if isinstance(img, str):
-            img = cv2.imread(img)
+    # Tạo folder Personal mới cho người này
+    next_num = get_next_personal_folder()
+    person_folder = os.path.join(PERSONAL_DIR, f"Personal{next_num}")
+    os.makedirs(person_folder, exist_ok=True)
+    print(f"Created folder: {person_folder}")
+    
+    # Copy ảnh từ máy local vào folder Personal
+    copied_paths = []
+    for i, img_path in enumerate(image_paths):
+        # Kiểm tra file có tồn tại
+        if not os.path.exists(img_path):
+            print(f"Error: File not found: {img_path}")
+            return None
+        
+        # Copy ảnh vào folder Personal
+        filename = f"image_{i+1}{os.path.splitext(img_path)[1]}"
+        dest_path = os.path.join(person_folder, filename)
+        shutil.copy2(img_path, dest_path)
+        copied_paths.append(dest_path)
+        print(f"Copied: {img_path} -> {dest_path}")
+    
+    # Đọc và xử lý ảnh
+    for i, img_path in enumerate(copied_paths):
+        img = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            print(f"Warning: Cannot read image {i+1}, skipping...")
+            continue
         
         # Chuyển BGR sang RGB
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -86,43 +152,58 @@ def Face_Register(images, infor, data_file="data.pkl"):
     # Kiểm tra có ít nhất 1 embedding
     if len(embeddings) == 0:
         print("Error: No faces detected in any images!")
+        # Xóa folder vì không có face hợp lệ
+        shutil.rmtree(person_folder)
         return None
     
     final_embedding = np.mean(embeddings, axis=0)
     
+    # Load dữ liệu cũ hoặc tạo mới
     if os.path.exists(data_file):
         try:
             with open(data_file, "rb") as f:
                 data = pickle.load(f)
+            print(f"Loaded existing database with {len(data)} users")
         except (EOFError, pickle.UnpicklingError):
-            print(" Warning: data.pkl is corrupted, creating new file...")
+            print("Warning: data.pkl is corrupted, creating new file...")
             data = {}
     else:
+        print("Creating new database file...")
         data = {}
         
     student_id = infor["student_id"]
     data[student_id] = {
         "name": infor["name"],
-        "embedding": final_embedding.tolist()
+        "embedding": final_embedding.tolist(),
+        "folder": f"Personal{next_num}"
     }
     
+    # Lưu file
     with open(data_file, "wb") as f:
         pickle.dump(data, f)
     
     print("Register successful!")
-    print(f"Used {len(embeddings)}/{len(images)} images")
+    print(f"Used {len(embeddings)}/{len(image_paths)} images")
+    print(f"Total users in database: {len(data)}")
     return final_embedding
 
+
 # Verification from cam        
-def Face_Verification(image, data_file="data.pkl", threshold=0.75):
+def Face_Verification(image, data_file=DATA_FILE, threshold=0.75):
     if image is None:
         print("Read image Error!")
+        return None
+    
+    # Kiểm tra file database có tồn tại không
+    if not os.path.exists(data_file):
+        print(f"Error: Database file not found at {data_file}")
+        print("Please register at least one person first!")
         return None
     
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     verifier = FaceVerification()
     
-    #SỬA: Phải detect face trước
+    # Phải detect face trước
     face_input = verifier.detect_and_extract_face(image_rgb)
     
     if face_input is None:
@@ -136,11 +217,23 @@ def Face_Verification(image, data_file="data.pkl", threshold=0.75):
         print("Cannot get embedding")
         return None
     
+    # Load database
     try:
         with open(data_file, "rb") as f:
             data = pickle.load(f)
-    except:
-        print("Load data Error")
+    except FileNotFoundError:
+        print(f"Error: File {data_file} not found")
+        return None
+    except EOFError:
+        print("Error: Database file is corrupted (empty)")
+        return None
+    except Exception as e:
+        print(f"Load data Error: {e}")
+        return None
+    
+    # Kiểm tra database có dữ liệu không
+    if not data or len(data) == 0:
+        print("Error: No registered users in database")
         return None
     
     best_id = None
@@ -166,43 +259,47 @@ def Face_Verification(image, data_file="data.pkl", threshold=0.75):
         "match": is_same
     }
 
+
 def main():
-    print("-" *60)
-    
+    print("-" * 60)
     
     while True:
         choice = int(input("Register (1), Verify (2), Out (0) Which choice?: "))
-        if choice == 1:
-            print("📝 Registration Mode")
-            print("Please provide 3 images:\n")
-    
-            raw_path1 = input("Path1: ").strip()
-            raw_path2 = input("Path2: ").strip()
-            raw_path3 = input("Path3: ").strip()
-    
-            if not raw_path1 or not raw_path2 or not raw_path3:
-                print("Path Error: One or more paths are empty")
-                return None
-    
-            image1 = cv2.imread(raw_path1, cv2.IMREAD_COLOR)
-            image2 = cv2.imread(raw_path2, cv2.IMREAD_COLOR)
-            image3 = cv2.imread(raw_path3, cv2.IMREAD_COLOR)
-    
-            if image1 is None or image2 is None or image3 is None:
-                print("Read image Error: Cannot read one or more images")
-                return None
-            
-            images = [image1, image2, image3]
         
+        if choice == 1:
+            print("Registration Mode")
+            print("Please provide 3 image paths from your local machine:\n")
+    
+            # Nhập đường dẫn ảnh từ máy local
+            image_paths = []
+            for i in range(1, 4):
+                raw_path = input(f"Path {i} (from your computer): ").strip()
+                
+                if not raw_path:
+                    print("Path Error: Path cannot be empty")
+                    return None
+                
+                # Kiểm tra file có tồn tại không
+                if not os.path.exists(raw_path):
+                    print(f"Error: File not found: {raw_path}")
+                    return None
+                
+                image_paths.append(raw_path)
+            
+            # Nhập thông tin
             student_id_input = input("Student ID: ").strip()
             name_input = input("Name: ").strip()
+            
+            if not student_id_input or not name_input:
+                print("Error: Student ID and Name cannot be empty")
+                return None
     
             info = {
                 'student_id': student_id_input,
                 'name': name_input
             }
 
-            Face_Register(images, info)
+            Face_Register(image_paths, info)
         
         elif choice == 2:
             print("Verification Mode")
@@ -246,9 +343,8 @@ def main():
             
         else:
             return   
-        print("-" *60)
+        print("-" * 60)
+
 
 if __name__ == "__main__":
     main()
-    
-    

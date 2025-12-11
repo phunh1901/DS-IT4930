@@ -3,8 +3,8 @@ import numpy as np
 import pickle
 import os
 import shutil
-from ai_modules.face_verification.model_loader import load_facenet, load_mtcnn
-
+from ai_modules.face_verification.model_loader import load_resnet, load_mtcnn
+from keras.applications.resnet50 import preprocess_input
 
 class FaceRecog:
     def __init__(self, data_dir):
@@ -16,7 +16,7 @@ class FaceRecog:
         os.makedirs(self.STUDENTS_DIR, exist_ok=True)
 
         # Load model
-        self.facenet = load_facenet()
+        self.resnet = load_resnet()
         self.detector = load_mtcnn() 
 
     
@@ -31,16 +31,19 @@ class FaceRecog:
         x, y = max(0, x), max(0, y)
 
         face_img = image[y:y+h, x:x+w]
-        face_img = cv2.resize(face_img, (160, 160))
         return face_img
 
     def get_embedding(self, face_image):
         if face_image is None:
             return None
 
+        face_image = cv2.resize(face_image, (224, 224))
         face_image = face_image.astype('float32')
         face_image = np.expand_dims(face_image, axis=0)
-        embedding = self.facenet.embeddings(face_image)[0]
+    
+        face_image = preprocess_input(face_image)
+    
+        embedding = self.resnet.predict(face_image)[0]
         return embedding
 
     def calculate_distance(self, emb1, emb2):
@@ -115,7 +118,7 @@ class FaceRecog:
 
 
     # Xác thực khuôn ămtj
-    def verify_from_frame(self, frame, threshold=0.75):
+    def verify_from_frame(self, frame, threshold=50):
         if not os.path.exists(self.DATA_FILE):
             print("Database not found.")
             return None

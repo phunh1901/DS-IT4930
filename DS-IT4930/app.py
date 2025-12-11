@@ -48,7 +48,7 @@ if menu == "Xác thực":
 
             result = face_recog.verify_from_frame(frame)
             if result is None:
-                st.error("Không phát hiện được khuôn mặt. Vui lòng chụp rõ hơn.")
+                st.error("Không phát hiện được khuôn mặt. Chụp rõ hơn.")
             else:
                 if result["match"]:
                     st.success("XÁC THỰC THÀNH CÔNG!")
@@ -77,8 +77,8 @@ if menu == "Xác thực":
             st.session_state.exam_started = True
 
     else:
-        st.success("Bạn đang trong bài thi!")
-        st.write("... Giao diện bài thi ở đây ...")
+        st.success("Trong bài thi!")
+        st.write("... Giao diện bài thi ...")
 
 
 # Đăng ký khuôn mặt
@@ -94,9 +94,9 @@ elif menu == "Đăng ký lại dữ liệu":
 
     if st.button("Lưu dữ liệu mới"):
         if not student_id or not name:
-            st.error("Vui lòng nhập đầy đủ MSSV và Họ tên!")
+            st.error("Nhập đầy đủ MSSV và Họ tên!")
         elif not img1 or not img2 or not img3:
-            st.error("Vui lòng upload đủ 3 ảnh!")
+            st.error("Upload đủ 3 ảnh!")
         else:
             try:
                 # Gọi hàm register với danh sách ảnh
